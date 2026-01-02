@@ -1,5 +1,6 @@
 import os
-from typing import List
+import glob
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -12,20 +13,41 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 load_dotenv()
 
 
-def load_documents() -> List[str]:
+def load_documents() -> List[Dict[str, Any]]:
     """
     Load documents for demonstration.
 
     Returns:
-        List of sample documents
+        List of documents with content and metadata
     """
     results = []
-    # TODO: Implement document loading
-    # HINT: Read the documents from the data directory
-    # HINT: Return a list of documents
-    # HINT: Your implementation depends on the type of documents you are using (.txt, .pdf, etc.)
-
-    # Your implementation here
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+    
+    # Find all .txt files in the data directory
+    txt_files = glob.glob(os.path.join(data_dir, "*.txt"))
+    
+    for file_path in txt_files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            # Extract filename without extension for metadata
+            filename = os.path.basename(file_path)
+            title = os.path.splitext(filename)[0]
+            
+            # Create document dictionary
+            doc = {
+                "content": content,
+                "metadata": {
+                    "title": title,
+                    "source": filename,
+                    "file_path": file_path
+                }
+            }
+            results.append(doc)
+        except Exception as e:
+            print(f"Error loading file {file_path}: {e}")
+    
     return results
 
 
@@ -49,11 +71,18 @@ class RAGAssistant:
         self.vector_db = VectorDB()
 
         # Create RAG prompt template
-        # TODO: Implement your RAG prompt template
-        # HINT: Use ChatPromptTemplate.from_template() with a template string
-        # HINT: Your template should include placeholders for {context} and {question}
-        # HINT: Design your prompt to effectively use retrieved context to answer questions
-        self.prompt_template = None  # Your implementation here
+        prompt_template_str = """You are a helpful AI assistant that answers questions based on the provided context.
+
+Use the following context to answer the question. If the context doesn't contain enough information to answer the question, say so clearly.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+        
+        self.prompt_template = ChatPromptTemplate.from_template(prompt_template_str)
 
         # Create the chain
         self.chain = self.prompt_template | self.llm | StrOutputParser()
@@ -112,16 +141,31 @@ class RAGAssistant:
             n_results: Number of relevant chunks to retrieve
 
         Returns:
-            Dictionary containing the answer and retrieved context
+            String containing the answer from the LLM
         """
-        llm_answer = ""
-        # TODO: Implement the RAG query pipeline
-        # HINT: Use self.vector_db.search() to retrieve relevant context chunks
-        # HINT: Combine the retrieved document chunks into a single context string
-        # HINT: Use self.chain.invoke() with context and question to generate the response
-        # HINT: Return a string answer from the LLM
-
-        # Your implementation here
+        # Search for relevant context chunks
+        search_results = self.vector_db.search(input, n_results=n_results)
+        
+        # Combine retrieved chunks into a single context string
+        if search_results.get("documents") and len(search_results["documents"]) > 0:
+            # Flatten the documents list (ChromaDB returns nested lists)
+            documents = search_results["documents"]
+            if documents and len(documents) > 0:
+                # Handle nested list structure from ChromaDB
+                if isinstance(documents[0], list):
+                    context_chunks = [chunk for sublist in documents for chunk in sublist]
+                else:
+                    context_chunks = documents
+                
+                context = "\n\n".join(context_chunks)
+            else:
+                context = "No relevant context found."
+        else:
+            context = "No relevant context found."
+        
+        # Generate response using the chain
+        llm_answer = self.chain.invoke({"context": context, "question": input})
+        
         return llm_answer
 
 
@@ -146,8 +190,8 @@ def main():
             if question.lower() == "quit":
                 done = True
             else:
-                result = assistant.query(question)
-                print(result)
+                result = assistant.invoke(question)
+                print(f"\nAnswer: {result}\n")
 
     except Exception as e:
         print(f"Error running RAG assistant: {e}")

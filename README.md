@@ -344,6 +344,9 @@ Before starting, make sure you have:
    ```bash
    git clone [your-repo-url]
    cd rt-aaidc-project1-template
+   # If you are using uv (recommended):
+   # uv sync
+   # Or using pip:
    pip install -r requirements.txt
    ```
 
@@ -364,6 +367,23 @@ Before starting, make sure you have:
    # OR
    GOOGLE_API_KEY=your_key_here
    ```
+
+### 🏃‍♂️ How to Run
+
+1. **Navigate to the project directory:**
+   ```powershell
+   cd rt-aaidc-project1-template
+   ```
+
+2. **Run the application:**
+   ```powershell
+   # Windows (using the virtual environment directly)
+   .\.venv\Scripts\python src\app.py
+
+   # OR if you are using uv
+   uv run src/app.py
+   ```
+
 
 
 ---

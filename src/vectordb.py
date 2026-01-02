@@ -2,6 +2,7 @@ import os
 import chromadb
 from typing import List, Dict, Any
 from sentence_transformers import SentenceTransformer
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 class VectorDB:
@@ -50,27 +51,16 @@ class VectorDB:
         Returns:
             List of text chunks
         """
-        # TODO: Implement text chunking logic
-        # You have several options for chunking text - choose one or experiment with multiple:
-        #
-        # OPTION 1: Simple word-based splitting
-        #   - Split text by spaces and group words into chunks of ~chunk_size characters
-        #   - Keep track of current chunk length and start new chunks when needed
-        #
-        # OPTION 2: Use LangChain's RecursiveCharacterTextSplitter
-        #   - from langchain_text_splitters import RecursiveCharacterTextSplitter
-        #   - Automatically handles sentence boundaries and preserves context better
-        #
-        # OPTION 3: Semantic splitting (advanced)
-        #   - Split by sentences using nltk or spacy
-        #   - Group semantically related sentences together
-        #   - Consider paragraph boundaries and document structure
-        #
-        # Feel free to try different approaches and see what works best!
-
-        chunks = []
-        # Your implementation here
-
+        # Use LangChain's RecursiveCharacterTextSplitter for better chunking
+        # It preserves sentence boundaries and handles text structure better
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=50,  # Overlap between chunks to preserve context
+            length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        
+        chunks = text_splitter.split_text(text)
         return chunks
 
     def add_documents(self, documents: List) -> None:
@@ -78,20 +68,61 @@ class VectorDB:
         Add documents to the vector database.
 
         Args:
-            documents: List of documents
+            documents: List of documents with 'content' and 'metadata' keys
         """
-        # TODO: Implement document ingestion logic
-        # HINT: Loop through each document in the documents list
-        # HINT: Extract 'content' and 'metadata' from each document dict
-        # HINT: Use self.chunk_text() to split each document into chunks
-        # HINT: Create unique IDs for each chunk (e.g., "doc_0_chunk_0")
-        # HINT: Use self.embedding_model.encode() to create embeddings for all chunks
-        # HINT: Store the embeddings, documents, metadata, and IDs in your vector database
-        # HINT: Print progress messages to inform the user
-
         print(f"Processing {len(documents)} documents...")
-        # Your implementation here
-        print("Documents added to vector database")
+        
+        all_chunks = []
+        all_metadatas = []
+        all_ids = []
+        
+        # Process each document
+        for doc_idx, doc in enumerate(documents):
+            content = doc.get("content", "")
+            metadata = doc.get("metadata", {})
+            
+            if not content:
+                print(f"Warning: Document {doc_idx} has no content, skipping...")
+                continue
+            
+            # Chunk the document
+            chunks = self.chunk_text(content)
+            
+            # Prepare data for ChromaDB
+            if chunks:
+                for chunk_idx, chunk in enumerate(chunks):
+                    chunk_id = f"doc_{doc_idx}_chunk_{chunk_idx}"
+                    
+                    # Create metadata for this chunk (include original doc metadata)
+                    chunk_metadata = {
+                        **metadata,
+                        "chunk_index": chunk_idx,
+                        "document_index": doc_idx
+                    }
+                    
+                    all_chunks.append(chunk)
+                    all_metadatas.append(chunk_metadata)
+                    all_ids.append(chunk_id)
+                
+                print(f"  Document {doc_idx + 1}/{len(documents)}: Created {len(chunks)} chunks")
+        
+        # Create embeddings for all chunks at once (more efficient)
+        if all_chunks:
+            embeddings = self.embedding_model.encode(all_chunks, show_progress_bar=False)
+            
+            # Convert embeddings to list format for ChromaDB
+            embeddings_list = embeddings.tolist() if hasattr(embeddings, 'tolist') else embeddings
+            
+            # Add all chunks to ChromaDB in one batch
+            self.collection.add(
+                ids=all_ids,
+                embeddings=embeddings_list,
+                documents=all_chunks,
+                metadatas=all_metadatas
+            )
+            print(f"Successfully added {len(all_chunks)} chunks to vector database")
+        else:
+            print("No chunks to add to vector database")
 
     def search(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """
@@ -104,17 +135,33 @@ class VectorDB:
         Returns:
             Dictionary containing search results with keys: 'documents', 'metadatas', 'distances', 'ids'
         """
-        # TODO: Implement similarity search logic
-        # HINT: Use self.embedding_model.encode([query]) to create query embedding
-        # HINT: Convert the embedding to appropriate format for your vector database
-        # HINT: Use your vector database's search/query method with the query embedding and n_results
-        # HINT: Return a dictionary with keys: 'documents', 'metadatas', 'distances', 'ids'
-        # HINT: Handle the case where results might be empty
-
-        # Your implementation here
+        # Create embedding for the query
+        query_embedding = self.embedding_model.encode([query], show_progress_bar=False)
+        
+        # Convert to list format for ChromaDB
+        query_embedding_list = query_embedding.tolist() if hasattr(query_embedding, 'tolist') else query_embedding
+        
+        # Search the collection
+        results = self.collection.query(
+            query_embeddings=query_embedding_list,
+            n_results=n_results
+        )
+        
+        # ChromaDB returns results in a specific format
+        # Handle the case where results might be empty
+        if not results or not results.get("documents") or len(results["documents"]) == 0:
+            return {
+                "documents": [],
+                "metadatas": [],
+                "distances": [],
+                "ids": [],
+            }
+        
+        # ChromaDB returns nested lists, so we need to extract the first element
+        # since we only queried with one embedding
         return {
-            "documents": [],
-            "metadatas": [],
-            "distances": [],
-            "ids": [],
+            "documents": results["documents"][0] if results.get("documents") else [],
+            "metadatas": results["metadatas"][0] if results.get("metadatas") else [],
+            "distances": results["distances"][0] if results.get("distances") else [],
+            "ids": results["ids"][0] if results.get("ids") else [],
         }
